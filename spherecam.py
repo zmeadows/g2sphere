@@ -12,15 +12,9 @@ from matplotlib import pyplot as plt
 
 DEBUG = True
 
-class G2SphereCam:
-    def __init__(self,
-            marble_center_guess_x,
-            marble_center_guess_y,
-            marble_radius_guess,
-            marble_radius_tolerance,
-            exposure_time_ms = 100000,
-            edge_par_1 = 80,
-            edge_par_2 = 180):
+class G2Cam(object):
+    def __init__(self, exposure_time_ms = 100000, **kwargs):
+        super(G2Cam, self).__init__(**kwargs)
 
         self.failed = False
 
@@ -36,57 +30,34 @@ class G2SphereCam:
                 print "Resolution: "    , camera.resolution
                 print "Framerate: "     , camera.framerate
                 print "Exposure Time: " , camera.shutter_speed
-                print "Canny Edge Parameter 1:", edge_par_1
-                print "Canny Edge Parameter 2:", edge_par_2
+                print ""
 
             with picamera.array.PiRGBArray(camera) as stream:
+                if DEBUG: print "Capturing image..."
                 camera.capture(stream, format='bgr')
                 # TODO: don't hardcode these numbers
                 self.image = stream.array #[50:1035, 600:1600]
 
-        if DEBUG: print "Identifying edges in color image..."
-        self.edges      = cv2.Canny(self.image, edge_par_1, edge_par_2)
+
+class G2EdgeCam(G2Cam):
+    def __init__(self, edge_par_1 = 80, edge_par_2 = 180, **kwargs):
+        super(G2EdgeCam, self).__init__(**kwargs)
 
         if DEBUG: print "Creating grayscale copy of image..."
         self.gray_image = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY)
 
-        if DEBUG: print "Identifying edges in grayscale image..."
+        if DEBUG:
+            print "Identifying edges in grayscale image..."
+            print "Canny Edge Parameter 1:", edge_par_1
+            print "Canny Edge Parameter 2:", edge_par_2
         self.gray_edges = cv2.Canny(self.gray_image, edge_par_1, edge_par_2)
 
-    def _clean_edges(self):
+    def write_edge_image(self, filepath):
+        return
 
-        if DEBUG: print "Cleaning extraneous detected edges outside/inside of sphere radius..."
-        self.gray_edges_cleaned = np.copy(self.gray_edges)
-        it = np.nditer(self.gray_edges_cleaned, flags=['multi_index'], op_flags=['readwrite'])
+    def _collect_edges(self, x_0, y_0):
 
-        while not it.finished:
-            if it[0] == 0:
-                it.iternext()
-            else:
-                x = (it.multi_index[1] - marble_center_guess_x)
-                y = (it.multi_index[0] - marble_center_guess_y)
-                r = np.sqrt(x**2 + y**2)
-
-                if (r < marble_radius_guess - marble_radius_tolerance or r > marble_radius_guess + marble_radius_tolerance):
-                    it[0] = 0
-
-                if self.xs.size > 10000:
-                    print "ERROR: Too many edge pixels (", self.xs.size, ") found!"
-                    return -1
-
-                it.iternext()
-
-        if self.xs.size < 100:
-            print "ERROR: Too few edge pixels (", self.xs.size, ") found!"
-            return -1
-
-    def find_edges(self):
-
-        if (self._clean_edges() != 0):
-            self.failed = True
-            return
-
-        if DEBUG: print "Shifting center and collecting edge pixel coordinates..."
+        if DEBUG: print "Collecting edge pixel coordinates..."
 
         self.xs = []
         self.ys = []
@@ -94,15 +65,14 @@ class G2SphereCam:
         it = np.nditer(self.gray_edges_cleaned, flags=['multi_index'], op_flags=['readonly'])
         while not it.finished:
             if (it[0] == 255):
-                x = it.multi_index[1] - marble_center_guess_x
-                y = it.multi_index[0] - marble_center_guess_y
+                x = it.multi_index[1] - x_0
+                y = it.multi_index[0] - y_0
                 self.xs.append(x)
                 self.ys.append(y)
             it.iternext()
 
         self.xs = np.array(self.xs)
         self.ys = np.array(self.ys)
-
 
         if DEBUG: print "Successfully found ", self.xs.size, " edge pixels."
 
@@ -131,33 +101,64 @@ class G2SphereCam:
 
         if DEBUG: print "Filepath: ", file_path
 
+    def plot_edges(self):
+
+        if DEBUG: "Plotting edge images..."
+
+        plt.figure()
+
+        plt.subplot(121),plt.imshow(self.gray_image,cmap = 'gray')
+        plt.subplot(122),plt.imshow(self.gray_edges,cmap = 'gray')
+        plt.gcf().canvas.set_window_title("Grayscale Edges")
+
+        plt.show()
+
+    def save_edge_image(self, filename):
+        cv2.imwrite(filename, self.gray_edges)
+
+class G2SphereCam(G2EdgeCam):
+    def __init__(self, **kwargs):
+         super(G2SphereCam, self).__init__(**kwargs)
+
+    def _clean_edges(self, center_guess_x, center_guess_y, radius_guess, radius_tolerance):
+        if DEBUG: print "Cleaning extraneous detected edges outside/inside of sphere radius..."
+        self.gray_edges_cleaned = np.copy(self.gray_edges)
+        it = np.nditer(self.gray_edges_cleaned, flags=['multi_index'], op_flags=['readwrite'])
+
+        while not it.finished:
+            if it[0] == 0:
+                it.iternext()
+            else:
+                x = (it.multi_index[1] - center_guess_x)
+                y = (it.multi_index[0] - center_guess_y)
+                r = np.sqrt(x**2 + y**2)
+
+                if (r < radius_guess - radius_tolerance or r > radius_guess + radius_tolerance):
+                    it[0] = 0
+
+                if self.xs.size > 10000:
+                    print "ERROR: Too many edge pixels (", self.xs.size, ") found!"
+                    return -1
+
+                it.iternext()
+
+        if self.xs.size < 100:
+            print "ERROR: Too few edge pixels (", self.xs.size, ") found!"
+            return -1
+
     def plot_edge_overlay(self):
 
-        if DEBUG: print "Preparing edge overlay image..."
+        if DEBUG: print "Preparing and plotting edge overlay image..."
         self.gray_edges_color = cv2.cvtColor(self.gray_edges, cv2.COLOR_GRAY2BGR)
 
-        # separate rgb to make white pixels red, and re-order to matplotlib imshow RGB ordering
         # TODO: use numpy indexing here instead (faster)
         b,g,r = cv2.split(self.gray_edges_color)
         g = g * 0
         b = b * 0
         self.gray_edges_color = cv2.merge((r,g,b))
 
-    def plot_edges(self):
-        plt.figure(1)
+        plt.figure()
+        plt.imshow(cv2.addWeighted(self.image, 0.3, self.gray_edges_color, 0.7, 0))
 
-        plt.subplot(121),plt.imshow(self.gray_image,cmap = 'gray')
-        plt.subplot(122),plt.imshow(self.gray_edges,cmap = 'gray')
 
-        #plt.figure(2)
 
-        #plt.imshow(cv2.addWeighted(self.image, 0.3, self.gray_edges_color, 0.7, 0))
-
-        #plt.figure(3)
-
-        #plt.imshow(self.gray_edges_cleaned, cmap = 'gray')
-
-        plt.show()
-
-s = G2SphereCam(470, 514, 330, 30)
-s.plot_edges()
