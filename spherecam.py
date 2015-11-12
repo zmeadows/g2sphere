@@ -1,5 +1,6 @@
 import time
 import os
+import sys
 
 import picamera
 import picamera.array
@@ -10,10 +11,44 @@ import cv2.cv as cv
 import numpy as np
 from matplotlib import pyplot as plt
 
+def query_yes_no(question, default="yes"):
+    """Ask a yes/no question via raw_input() and return their answer.
+
+    "question" is a string that is presented to the user.
+    "default" is the presumed answer if the user just hits <Enter>.
+        It must be "yes" (the default), "no" or None (meaning
+        an answer is required of the user).
+
+    The "answer" return value is True for "yes" or False for "no".
+    """
+    valid = {"yes": True, "y": True, "ye": True,
+             "no": False, "n": False}
+    if default is None:
+        prompt = " [y/n] "
+    elif default == "yes":
+        prompt = " [Y/n] "
+    elif default == "no":
+        prompt = " [y/N] "
+    else:
+        raise ValueError("invalid default answer: '%s'" % default)
+
+    while True:
+        sys.stdout.write(question + prompt)
+        choice = raw_input().lower()
+        if default is not None and choice == '':
+            return valid[default]
+        elif choice in valid:
+            return valid[choice]
+        else:
+            sys.stdout.write("Please respond with 'yes' or 'no' "
+                             "(or 'y' or 'n').\n")
+
 DEBUG = True
 
 class G2Cam(object):
-    def __init__(self, exposure_time_ms = 100000, **kwargs):
+
+    def __init__(self, exposure_time_ms = 100000, x_cut_1 = None,
+                 x_cut_2 = None, y_cut_1 = None, y_cut_2 = None, **kwargs):
         super(G2Cam, self).__init__(**kwargs)
 
         self.failed = False
@@ -38,6 +73,9 @@ class G2Cam(object):
                 # TODO: don't hardcode these numbers
                 self.image = stream.array #[50:1035, 600:1600]
 
+                if x_cut_1 and x_cut_2 and y_cut_1 and y_cut_2:
+                    self.image = self.image[y_cut_1:y_cut_2, x_cut_1:x_cut_2]
+
 
 class G2EdgeCam(G2Cam):
     def __init__(self, edge_par_1 = 80, edge_par_2 = 180, **kwargs):
@@ -55,14 +93,14 @@ class G2EdgeCam(G2Cam):
     def write_edge_image(self, filepath):
         return
 
-    def _collect_edges(self, x_0, y_0):
+    def _collect_edges(self, x_0 = 0, y_0 = 0):
 
         if DEBUG: print "Collecting edge pixel coordinates..."
 
         self.xs = []
         self.ys = []
 
-        it = np.nditer(self.gray_edges_cleaned, flags=['multi_index'], op_flags=['readonly'])
+        it = np.nditer(self.gray_edges, flags=['multi_index'], op_flags=['readonly'])
         while not it.finished:
             if (it[0] == 255):
                 x = it.multi_index[1] - x_0
@@ -77,6 +115,8 @@ class G2EdgeCam(G2Cam):
         if DEBUG: print "Successfully found ", self.xs.size, " edge pixels."
 
     def write_edges_to_file(self):
+
+        self._collect_edges()
 
         if DEBUG: print "Writing edge coordinates to file..."
 
@@ -93,11 +133,11 @@ class G2EdgeCam(G2Cam):
                 if os.path.isfile(os.path.join(data_dir,f)) ]
 
         if len(old_data_nums) == 0:
-            file_path = data_dir + "1.dat"
+            file_path = data_dir + "1.npy"
         else:
-            file_path = data_dir + str(max(old_data_nums) + 1) + ".dat"
+            file_path = data_dir + str(max(old_data_nums) + 1) + ".npy"
 
-        np.savetxt(file_path, xy_data)
+        np.save(file_path, xy_data)
 
         if DEBUG: print "Filepath: ", file_path
 
@@ -120,10 +160,9 @@ class G2SphereCam(G2EdgeCam):
     def __init__(self, **kwargs):
          super(G2SphereCam, self).__init__(**kwargs)
 
-    def _clean_edges(self, center_guess_x, center_guess_y, radius_guess, radius_tolerance):
+    def clean_edges(self, center_guess_x, center_guess_y, radius_guess, radius_tolerance):
         if DEBUG: print "Cleaning extraneous detected edges outside/inside of sphere radius..."
-        self.gray_edges_cleaned = np.copy(self.gray_edges)
-        it = np.nditer(self.gray_edges_cleaned, flags=['multi_index'], op_flags=['readwrite'])
+        it = np.nditer(self.gray_edges, flags=['multi_index'], op_flags=['readwrite'])
 
         while not it.finished:
             if it[0] == 0:
@@ -136,15 +175,8 @@ class G2SphereCam(G2EdgeCam):
                 if (r < radius_guess - radius_tolerance or r > radius_guess + radius_tolerance):
                     it[0] = 0
 
-                if self.xs.size > 10000:
-                    print "ERROR: Too many edge pixels (", self.xs.size, ") found!"
-                    return -1
-
                 it.iternext()
 
-        if self.xs.size < 100:
-            print "ERROR: Too few edge pixels (", self.xs.size, ") found!"
-            return -1
 
     def plot_edge_overlay(self):
 

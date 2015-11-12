@@ -99,15 +99,12 @@ class G2ImageSphericity(G2SphericityAnalysis):
 class G2FileSphericity(G2SphericityAnalysis):
     def __init__(self, filename, **kwargs):
         super(G2FileSphericity, self).__init__(**kwargs)
-        sphere_data = np.loadtxt(filename)
+        sphere_data = np.load(filename)
         self.xs = sphere_data[:,0] - np.average(sphere_data[:,0])
         self.ys = sphere_data[:,1] - np.average(sphere_data[:,1])
 
         self._optimize_center()
         self._calculate_r_theta()
-
-    def plot_x_y(self):
-        return
 
 DARKGREY  = "#9f9f9f"
 GREY      = "#D7D7D7"
